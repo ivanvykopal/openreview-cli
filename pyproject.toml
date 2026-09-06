@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openreview-cli"
+version = "0.1.0"
+description = "Command-line tool for reviewers and area chairs working with OpenReview"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openreview-py",
+    "click",
+    "pyyaml",
+    "pyjwt",
+]
+
+[project.scripts]
+openreview = "openreview_cli.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["openreview_cli*"]

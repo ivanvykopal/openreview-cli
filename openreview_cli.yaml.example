@@ -1,0 +1,22 @@
+# OpenReview CLI configuration.
+# Copy this file to:  ~/.openreview_cli.yaml
+# (on Windows: C:\Users\<you>\.openreview_cli.yaml)
+# All keys are optional; unknown keys are ignored.
+# Fill in the email registered with OpenReview and your password.
+
+username: you@example.org
+password: your-openreview-password
+
+# Optional: venue id prefixes used as defaults by subcommands.
+# Leave empty to search all venues (recommended for `reviews --mine`).
+venues: []
+#  - aclweb.org/ACL/ARR
+
+# Optional: default download directory for the `download` command.
+# download_dir: ~/openreview-downloads
+
+# Optional: SQLite database for `status` activity tracking.
+# db_path: ~/.openreview_cli.sqlite3
+
+# Optional: seconds to sleep between API calls.
+# request_delay: 0.5
