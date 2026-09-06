@@ -180,7 +180,7 @@ def cli(
     """OpenReview CLI - review status, deadlines, downloads and more.
 
     Shared options apply to every subcommand. Run
-    ``openreview_cli <command> --help`` for command-specific help.
+    ``openreview-cli <command> --help`` for command-specific help.
     """
     ctx.obj = _build_context(config_path, username, password, venues, as_json)
 
@@ -200,4 +200,4 @@ for _module in (cmd_status, cmd_reviews, cmd_download, cmd_deadlines, cmd_assign
 
 
 if __name__ == "__main__":  # pragma: no cover
-    cli(prog_name="openreview_cli")
+    cli(prog_name="openreview-cli")

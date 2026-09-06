@@ -14,7 +14,7 @@ Install as an isolated CLI tool with [pipx](https://pipx.pypa.io) (recommended):
 
 ```bash
 pipx install git+https://github.com/ivanvykopal/openreview-cli.git
-openreview --help
+openreview-cli --help
 ``+
 
 or with [uv](https://docs.astral.sh/uv/):

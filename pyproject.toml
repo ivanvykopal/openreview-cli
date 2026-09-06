@@ -14,9 +14,8 @@ dependencies = [
     "pyyaml",
     "pyjwt",
 ]
-
 [project.scripts]
-openreview = "openreview_cli.__main__:main"
+openreview-cli = "openreview_cli.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["openreview_cli*"]

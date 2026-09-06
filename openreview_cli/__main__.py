@@ -30,7 +30,7 @@ def main() -> None:
     from .cli import cli
 
     try:
-        cli(prog_name="openreview_cli")
+        cli(prog_name="openreview-cli")
     except KeyboardInterrupt:
         print()
         raise SystemExit(130)

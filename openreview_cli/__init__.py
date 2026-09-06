@@ -6,7 +6,7 @@ check your review status, browse reviews, download paper files, track
 venue deadlines, and list your paper assignments — with human-readable
 or JSON output.
 
-Run ``openreview_cli --help`` after installing the dependencies.
+Run ``openreview-cli --help`` after installing the dependencies.
 """
 
 from .cli import cli  # noqa: F401
