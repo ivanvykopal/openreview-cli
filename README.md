@@ -13,26 +13,26 @@ Requires Python 3.10+.
 Install as an isolated CLI tool with [pipx](https://pipx.pypa.io) (recommended):
 
 ```bash
-pipx install git+https://github.com/<you>/openreview_cli.git
+pipx install git+https://github.com/ivanvykopal/openreview-cli.git
 openreview --help
 ``+
 
 or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install git+https://github.com/<you>/openreview_cli.git
+uv tool install git+https://github.com/ivanvykopal/openreview-cli.git
 ```
 
 or directly with pip:
 
 ```bash
-pip install git+https://github.com/<you>/openreview_cli.git
+pip install git+https://github.com/ivanvykopal/openreview-cli.git
 ```
 
 For development, install editable from a checkout:
 
 ```bash
-git clone https://github.com/<you>/openreview_cli.git
+git clone https://github.com/ivanvykopal/openreview-cli.git
 cd openreview_cli
 pip install -e .
 ```
