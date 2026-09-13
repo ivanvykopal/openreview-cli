@@ -14,13 +14,17 @@ from typing import Any
 
 import click
 
+from ..helpers import arr_cycle_id_of_submission
 from . import get_facade, handle_errors
 from ..lib.reviews import (
+    expand_previous_versions,
     fetch_my_reviews,
     fetch_reviews,
+    filter_new_notes,
     save_reviews_json,
+    save_reviews_markdown,
 )
-from ..lib.status import find_my_submissions
+from ..lib.status import StatusDB, find_my_submissions
 from .formatting import emit, truncate
 
 __all__ = ["command"]
@@ -128,6 +132,32 @@ def _print_payload(submission: Any, entry: dict[str, Any]) -> None:
     default=None,
     help="Number of extra (older) ARR cycles to include (default: 1)",
 )
+@click.option(
+    "--new",
+    "new_only",
+    is_flag=True,
+    help="Show only reviews/comments not yet seen by 'status' "
+    "(run 'status' first to record the baseline)",
+)
+@click.option(
+    "--previous",
+    "previous",
+    is_flag=True,
+    help="Also fetch earlier ARR versions linked via previous_URL",
+)
+@click.option(
+    "--previous-depth",
+    type=int,
+    default=2,
+    help="Number of older ARR versions to follow (default: 2)",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["json", "md"]),
+    default="json",
+    help="Format for --output files (default: json)",
+)
 @click.pass_context
 @handle_errors
 def reviews(
@@ -138,6 +168,10 @@ def reviews(
     mine: bool,
     include_old: bool,
     cycles_back: int | None,
+    new_only: bool,
+    previous: bool,
+    previous_depth: int,
+    output_format: str,
 ) -> None:
     """Fetch reviews, meta-reviews, and decisions (yours or your papers')."""
     facade = get_facade(ctx)
@@ -166,10 +200,28 @@ def reviews(
             sid: entry for sid, entry in results.items() if sid in wanted
         }
 
-    if output_dir:
-        errors = list(errors) + save_reviews_json(
-            results, Path(output_dir).expanduser()
+    previous_of: dict[str, list[str]] = {}
+    if previous:
+        results, previous_of, prev_errors = expand_previous_versions(
+            facade, results, max_depth=previous_depth
         )
+        errors = list(errors) + prev_errors
+
+    if new_only:
+        config = ctx.obj["config"]
+        with StatusDB(str(Path(config.db_path).expanduser())) as db:
+            seen = db.seen_note_ids()
+        results = filter_new_notes(results, seen)
+
+    if output_dir:
+        if output_format == "md":
+            errors = list(errors) + save_reviews_markdown(
+                results, Path(output_dir).expanduser()
+            )
+        else:
+            errors = list(errors) + save_reviews_json(
+                results, Path(output_dir).expanduser()
+            )
 
     def human() -> None:
         for submission in submissions:
@@ -177,6 +229,17 @@ def reviews(
             if entry is None:
                 continue
             _print_payload(submission, entry)
+            for prev_id in previous_of.get(submission.id, []):
+                prev_entry = results.get(prev_id)
+                if prev_entry is None:
+                    continue
+                prev = prev_entry["submission"]
+                cycle = arr_cycle_id_of_submission(prev) or prev.venueid or "-"
+                click.secho(
+                    f"  Previous version: {truncate(prev.title, 60)} "
+                    f"({cycle})",
+                    fg="blue",
+                )
             click.echo("")
         for error in errors:
             click.secho(

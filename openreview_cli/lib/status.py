@@ -36,6 +36,7 @@ from ..helpers import (
     note_id,
     note_invitation,
     note_time,
+    previous_submission_id,
 )
 from ..models import Submission
 
@@ -196,6 +197,7 @@ def _submission_from_note(note: Any) -> Submission:
         abstract=content_value(note, "abstract", None),
         status="SUBMITTED",
         status_detail="",
+        previous_submission_id=previous_submission_id(note),
     )
 
 
@@ -455,6 +457,25 @@ class StatusDB:
             "SELECT id FROM notes WHERE id = ?", (note_id_value,)
         ).fetchone()
         return row is not None
+
+    def seen_note_ids(self, submission_id: str | None = None) -> set[str]:
+        """Return the ids of notes already recorded in the database.
+
+        Args:
+            submission_id: Restrict to notes of one submission; when
+                ``None``, all recorded note ids are returned.
+
+        Returns:
+            The set of seen note ids (empty when nothing is recorded).
+        """
+        if submission_id is None:
+            rows = self._connection.execute("SELECT id FROM notes")
+        else:
+            rows = self._connection.execute(
+                "SELECT id FROM notes WHERE submission_id = ?",
+                (submission_id,),
+            )
+        return {str(row[0]) for row in rows.fetchall()}
 
     def save_submission(self, submission: Submission) -> None:
         """Insert or update a submission row (updating ``last_seen``).

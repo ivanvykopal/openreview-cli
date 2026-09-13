@@ -423,3 +423,261 @@ def save_reviews_json(
             )
 
     return errors
+
+
+def filter_new_notes(
+    results: dict[str, dict[str, Any]],
+    seen_note_ids: set[str],
+) -> dict[str, dict[str, Any]]:
+    """Keep only notes whose id is not in ``seen_note_ids``.
+
+    Entries with no remaining notes are dropped entirely. The
+    submission objects are kept as-is, so callers can still tell which
+    paper each surviving note belongs to.
+
+    Args:
+        results: The ``results`` part of :func:`fetch_reviews`'s return.
+        seen_note_ids: Note ids already recorded (e.g. from the status
+            database). Notes without an id are always kept.
+
+    Returns:
+        A new results dict containing only unseen notes.
+    """
+    filtered: dict[str, dict[str, Any]] = {}
+
+    for submission_id, payload in results.items():
+        kept = {
+            "submission": payload["submission"],
+            "reviews": [
+                r for r in payload["reviews"] if r.id not in seen_note_ids
+            ],
+            "meta_reviews": [
+                m
+                for m in payload["meta_reviews"]
+                if m.id not in seen_note_ids
+            ],
+            "decisions": [
+                d for d in payload["decisions"] if d.id not in seen_note_ids
+            ],
+            "comments": [
+                c for c in payload["comments"] if c.id not in seen_note_ids
+            ],
+        }
+        if any(
+            kept[key] for key in ("reviews", "meta_reviews", "decisions", "comments")
+        ):
+            filtered[submission_id] = kept
+
+    return filtered
+
+
+def expand_previous_versions(
+    facade: OpenReviewFacade,
+    results: dict[str, dict[str, Any]],
+    max_depth: int = 2,
+) -> tuple[dict[str, dict[str, Any]], dict[str, list[str]], list[dict[str, str]]]:
+    """Follow ``previous_URL`` links and fetch earlier ARR cycles.
+
+    For every submission in ``results`` that links to a previous ARR
+    version, this fetches that version's note and forum, builds its
+    entry (same shape as :func:`fetch_reviews`), and repeats up to
+    ``max_depth`` hops. Earlier versions are added to the returned
+    results dict; they are not written back into ``results``.
+
+    Args:
+        facade: Rate-limited OpenReview facade.
+        results: The ``results`` part of :func:`fetch_reviews`'s return.
+        max_depth: Maximum number of older versions to follow per
+            submission (default 2).
+
+    Returns:
+        An ``(all_results, previous_of, errors)`` tuple. ``all_results``
+        contains the original entries plus the fetched earlier ones
+        keyed by their own submission id; ``previous_of`` maps each
+        original submission id to the list of its older submission ids
+        (newest first); ``errors`` lists per-paper failures.
+    """
+    all_results = dict(results)
+    previous_of: dict[str, list[str]] = {}
+    errors: list[dict[str, str]] = []
+
+    for submission_id, payload in results.items():
+        chain: list[str] = []
+        current = payload["submission"]
+
+        for _ in range(max_depth):
+            prev_id = current.previous_submission_id
+            if not prev_id or prev_id in all_results or prev_id in chain:
+                break
+
+            try:
+                note = facade.get_note(id=prev_id)
+                prev_submission = _submission_from_note(note)
+                prev_results, fetch_errors = fetch_reviews(
+                    facade, [prev_submission]
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(
+                    {
+                        "paper": current.title,
+                        "error": f"Unable to fetch previous version "
+                        f"{prev_id}: {exc}",
+                    }
+                )
+                break
+
+            errors.extend(fetch_errors)
+            entry = prev_results.get(prev_id)
+            if entry is None:
+                break
+
+            all_results[prev_id] = entry
+            chain.append(prev_id)
+            current = entry["submission"]
+
+        previous_of[submission_id] = chain
+
+    return all_results, previous_of, errors
+
+
+def _thread_comments(comments: list[Comment]) -> list[tuple[int, Comment]]:
+    """Pair each comment with an indentation level via ``reply_to``.
+
+    Replies are placed directly after the note they answer; comments
+    whose parent is not in the list (or missing entirely) are treated
+    as top-level.
+    """
+    by_id = {c.id: c for c in comments}
+    children: dict[str | None, list[Comment]] = {}
+
+    for comment in comments:
+        parent = comment.reply_to if comment.reply_to in by_id else None
+        children.setdefault(parent, []).append(comment)
+
+    ordered: list[tuple[int, Comment]] = []
+
+    def _emit(parent: str | None, depth: int) -> None:
+        for comment in children.get(parent, []):
+            ordered.append((depth, comment))
+            _emit(comment.id, depth + 1)
+
+    _emit(None, 0)
+    return ordered
+
+
+def _markdown_entry(payload: dict[str, Any]) -> str:
+    """Render one paper's entry as Markdown."""
+    submission = payload["submission"]
+    lines: list[str] = [
+        f"# {submission.title}",
+        "",
+        f"- **Id**: {submission.id}",
+        f"- **Venue**: {submission.venue or submission.venueid or '-'}",
+        f"- **Status**: {submission.status}",
+    ]
+    if submission.previous_submission_id:
+        lines.append(
+            f"- **Previous version**: {submission.previous_submission_id}"
+        )
+    if submission.abstract:
+        lines += ["", "## Abstract", "", str(submission.abstract)]
+
+    if payload["reviews"]:
+        lines += ["", "## Reviews", ""]
+        for review in payload["reviews"]:
+            lines += [
+                f"### Review {review.id}",
+                "",
+                f"- **Rating**: {review.rating or '-'}",
+                f"- **Confidence**: {review.confidence or '-'}",
+                f"- **Created**: {review.created or '-'}",
+                "",
+            ]
+            for key, value in (review.content or {}).items():
+                lines += [f"**{key}**", "", str(value or ""), ""]
+
+    if payload["meta_reviews"]:
+        lines += ["", "## Meta-reviews", ""]
+        for meta in payload["meta_reviews"]:
+            lines += [
+                f"### Meta-review {meta.id}",
+                "",
+                f"- **Recommendation**: {meta.recommendation or '-'}",
+                f"- **Created**: {meta.created or '-'}",
+                "",
+            ]
+            for key, value in (meta.content or {}).items():
+                lines += [f"**{key}**", "", str(value or ""), ""]
+
+    if payload["decisions"]:
+        lines += ["", "## Decisions", ""]
+        for decision in payload["decisions"]:
+            lines += [
+                f"### Decision {decision.id}",
+                "",
+                f"{decision.decision} ({decision.created or '-'})",
+                "",
+            ]
+
+    if payload["comments"]:
+        lines += ["", "## Comments and rebuttals", ""]
+        role_labels = {"authors": "Rebuttal", "reviewers": "Reviewer reply"}
+        for depth, comment in _thread_comments(payload["comments"]):
+            label = role_labels.get(comment.role, "Comment")
+            indent = "  " * depth
+            title = f": {comment.title}" if comment.title else ""
+            lines += [
+                f"{indent}### {label} {comment.id}{title} ({comment.created or '-'})",
+                "",
+            ]
+            body = comment.comment or "(no text)"
+            lines += [f"{indent}{line}" for line in body.splitlines()]
+            lines.append("")
+
+    if not any(
+        payload[key]
+        for key in ("reviews", "meta_reviews", "decisions", "comments")
+    ):
+        lines += ["", "No reviews, meta-reviews, or decisions visible yet."]
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def save_reviews_markdown(
+    results: dict[str, dict[str, Any]],
+    output_dir: Path,
+) -> list[dict[str, str]]:
+    """Write per-paper review Markdown files into ``output_dir``.
+
+    Args:
+        results: The ``results`` part of :func:`fetch_reviews`'s return
+            (may include earlier-cycle entries from
+            :func:`expand_previous_versions`).
+        output_dir: Directory to write the files into (created if
+            missing).
+
+    Returns:
+        A list of ``{"paper": submission_id, "error": message}`` dicts,
+        one per failed paper.
+    """
+    errors: list[dict[str, str]] = []
+
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return [
+            {
+                "paper": "",
+                "error": f"Cannot create output directory {output_dir}: {exc}",
+            }
+        ]
+
+    for submission_id, payload in results.items():
+        try:
+            path = output_dir / f"{submission_id}.md"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_markdown_entry(payload))
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"paper": submission_id, "error": str(exc)})
+
+    return errors

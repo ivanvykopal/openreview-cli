@@ -310,3 +310,28 @@ def is_dead_submission(venue: str, venueid: str) -> bool:
         or "corr" in venue_lower
         or "arxiv" in venue_lower
     )
+
+
+def previous_submission_id(note: Any) -> str | None:
+    """Extract the previous cycle's submission id from a submission note.
+
+    ARR resubmissions link to their earlier version via a content URL
+    field: ``previous_URL`` on ARR submissions, ``paper_link`` on
+    commitment venues. The URL looks like
+    ``https://openreview.net/forum?id=<note id>``.
+
+    Args:
+        note: A submission note-like object.
+
+    Returns:
+        The previous submission's note id, or ``None`` when the note
+        carries no usable link.
+    """
+    for key in ("previous_URL", "paper_link"):
+        url = content_value(note, key)
+        if not isinstance(url, str) or not url:
+            continue
+        match = re.search(r"[?&]id=([A-Za-z0-9]+)", url)
+        if match:
+            return match.group(1)
+    return None

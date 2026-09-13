@@ -29,7 +29,7 @@ class Submission:
     abstract: str | None
     status: str
     status_detail: str
-
+    previous_submission_id: str | None = None
 
 @dataclass
 class Review:
