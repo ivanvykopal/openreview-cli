@@ -25,7 +25,7 @@ from ..helpers import (
     note_invitation,
     note_time,
 )
-from ..models import Decision, MetaReview, Review, Submission
+from ..models import Comment, Decision, MetaReview, Review, Submission
 from .status import _submission_from_note
 
 
@@ -144,6 +144,7 @@ def fetch_my_reviews(
         reviews: list[Review] = []
         meta_reviews: list[MetaReview] = []
         decisions: list[Decision] = []
+        comments: list[Comment] = []
 
         for kind, note in pairs:
             if kind == "review":
@@ -153,12 +154,31 @@ def fetch_my_reviews(
             else:
                 decisions.append(_build_decision(submission.id, note))
 
+        # Author rebuttals and reviewer replies are not "written by
+        # you" notes, so --mine fetches them separately from the
+        # paper's forum instead.
+        try:
+            forum_notes = facade.get_all_notes(forum=forum) or []
+            comments = [
+                _build_comment(submission.id, note)
+                for note in forum_notes
+                if classify_note(note) == "comment"
+            ]
+        except Exception as exc:  # noqa: BLE001
+            errors.append(
+                {
+                    "paper": submission.title,
+                    "error": f"Unable to read forum {forum}: {exc}",
+                }
+            )
+
         submissions.append(submission)
         results[submission.id] = {
             "submission": submission,
             "reviews": reviews,
             "meta_reviews": meta_reviews,
             "decisions": decisions,
+            "comments": comments,
         }
 
     return submissions, results, errors
@@ -185,6 +205,46 @@ def _content_map(note: Any) -> dict[str, Any]:
     """Flatten a note's content into ``{key: unwrapped value}``."""
     content = getattr(note, "content", {}) or {}
     return {str(key): content_value(note, str(key)) for key in content.keys()}
+
+
+def _signatures_of(note: Any) -> list[str]:
+    """Return a note's signature ids (single or plural attribute)."""
+    signatures = getattr(note, "signatures", None)
+    if signatures:
+        return [str(s) for s in signatures if s]
+    single = getattr(note, "signature", None)
+    return [str(single)] if single else []
+
+
+def _comment_role(note: Any) -> str:
+    """Determine who wrote a comment note from its signature.
+
+    Returns ``"authors"`` for author rebuttals (signed by an
+    ``.../Authors`` group), ``"reviewers"`` for reviewer notes, and
+    ``"other"`` for anyone else (area chairs, program chairs, ...).
+    """
+    for signature in _signatures_of(note):
+        last = str(signature).split("/")[-1].lower()
+        if last == "authors":
+            return "authors"
+        if last.startswith("reviewer"):
+            return "reviewers"
+    return "other"
+
+
+def _build_comment(submission_id: str, note: Any) -> Comment:
+    """Build a :class:`Comment` from a comment note."""
+    return Comment(
+        id=note_id(note) or "",
+        submission_id=submission_id,
+        role=_comment_role(note),
+        reply_to=getattr(note, "replyto", None) or None,
+        signatures=_signatures_of(note),
+        title=content_value(note, "title"),
+        comment=content_value(note, "comment")
+        or content_value(note, "response"),
+        created=note_time(note),
+    )
 
 
 def _build_review(submission_id: str, note: Any) -> Review:
@@ -235,13 +295,17 @@ def build_review_objects(
 
     Returns:
         A dict with keys ``"submission"``, ``"reviews"``,
-        ``"meta_reviews"``, and ``"decisions"`` holding the
-        :class:`~openreview_cli.models.Submission` and the lists of
-        model objects. Comments and unclassifiable notes are ignored.
+        ``"meta_reviews"``, ``"decisions"``, and ``"comments"`` holding
+        the :class:`~openreview_cli.models.Submission` and the lists of
+        model objects. ``"comments"`` holds all official comments,
+        with a ``role`` (``"authors"`` / ``"reviewers"`` / ``"other"``)
+        distinguishing author rebuttals from reviewer replies;
+        unclassifiable notes are ignored.
     """
     reviews: list[Review] = []
     meta_reviews: list[MetaReview] = []
     decisions: list[Decision] = []
+    comments: list[Comment] = []
 
     for note in notes or []:
         kind = classify_note(note)
@@ -252,12 +316,15 @@ def build_review_objects(
             meta_reviews.append(_build_meta_review(submission.id, note))
         elif kind == "decision":
             decisions.append(_build_decision(submission.id, note))
+        elif kind == "comment":
+            comments.append(_build_comment(submission.id, note))
 
     return {
         "submission": submission,
         "reviews": reviews,
         "meta_reviews": meta_reviews,
         "decisions": decisions,
+        "comments": comments,
     }
 
 
@@ -344,6 +411,7 @@ def save_reviews_json(
                     dataclasses.asdict(m) for m in payload["meta_reviews"]
                 ],
                 "decisions": [dataclasses.asdict(d) for d in payload["decisions"]],
+                "comments": [dataclasses.asdict(c) for c in payload["comments"]],
             }
 
             path = output_dir / f"{submission_id}.json"

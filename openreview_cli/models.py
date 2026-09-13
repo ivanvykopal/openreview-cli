@@ -66,6 +66,26 @@ class Decision:
 
 
 @dataclass
+class Comment:
+    """A comment or rebuttal note attached to a submission.
+
+    ``role`` says who wrote it: ``"authors"`` (a rebuttal),
+    ``"reviewers"``, or ``"other"``. ``reply_to`` is the id of the note
+    it responds to, so a reviewer reply to a rebuttal can be matched to
+    it.
+    """
+
+    id: str
+    submission_id: str
+    role: str
+    reply_to: str | None
+    signatures: list[str]
+    title: str | None
+    comment: str | None
+    created: str | None
+
+
+@dataclass
 class Deadline:
     """A venue stage derived from an OpenReview invitation.
 

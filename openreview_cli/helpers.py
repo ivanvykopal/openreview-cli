@@ -117,11 +117,22 @@ def classify_note(note: Any) -> str:
         One of ``"review"``, ``"meta_review"``, ``"decision"``,
         ``"comment"``, or ``"other"``.
     """
-    invitation = note_invitation(note).lower()
+    # API v2 notes carry a plural ``invitations`` list; v1 a single
+    # ``invitation`` string. Consider all of them when classifying.
+    invitations = getattr(note, "invitations", None) or []
+    invitation = " ".join(
+        [note_invitation(note).lower()]
+        + [str(inv).lower() for inv in invitations]
+    )
 
     content = getattr(note, "content", {}) or {}
 
     keys = {str(key).lower() for key in content.keys()}
+
+    # Issue reports (e.g. Meta-Review_Issue_Report, Review_Issue_Report)
+    # are side-channel notes, not the reviews / meta-reviews themselves.
+    if "issue_report" in invitation or "issue report" in invitation:
+        return "other"
 
     # Decision
     if "decision" in invitation or "decision" in keys:

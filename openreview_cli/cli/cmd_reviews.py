@@ -69,8 +69,22 @@ def _print_payload(submission: Any, entry: dict[str, Any]) -> None:
         click.secho(f"  Decision {decision.id}", fg="green")
         click.echo(f"    {decision.decision} ({decision.created or '-'})")
 
+    role_labels = {"authors": "Rebuttal", "reviewers": "Reviewer reply"}
+    for comment in entry["comments"]:
+        label = role_labels.get(comment.role, "Comment")
+        click.secho(f"  {label} {comment.id}", fg="magenta")
+        if comment.title:
+            click.echo(f"    Title: {comment.title}")
+        click.echo(f"    Created: {comment.created or '-'}")
+        if comment.comment:
+            for line in comment.comment.splitlines():
+                click.echo(f"    {truncate(line, 100)}")
+
     if not (
-        entry["reviews"] or entry["meta_reviews"] or entry["decisions"]
+        entry["reviews"]
+        or entry["meta_reviews"]
+        or entry["decisions"]
+        or entry["comments"]
     ):
         click.echo("  No reviews, meta-reviews, or decisions visible yet.")
 
@@ -101,6 +115,19 @@ def _print_payload(submission: Any, entry: dict[str, Any]) -> None:
     is_flag=True,
     help="Fetch the reviews YOU wrote (on other people's papers)",
 )
+@click.option(
+    "--all",
+    "include_old",
+    is_flag=True,
+    help="Include submissions from older ARR cycles / years "
+    "(default: newest cycle plus one back)",
+)
+@click.option(
+    "--cycles-back",
+    type=int,
+    default=None,
+    help="Number of extra (older) ARR cycles to include (default: 1)",
+)
 @click.pass_context
 @handle_errors
 def reviews(
@@ -109,6 +136,8 @@ def reviews(
     submission_ids: tuple[str, ...],
     output_dir: str | None,
     mine: bool,
+    include_old: bool,
+    cycles_back: int | None,
 ) -> None:
     """Fetch reviews, meta-reviews, and decisions (yours or your papers')."""
     facade = get_facade(ctx)
@@ -122,7 +151,12 @@ def reviews(
             facade, venue=venue
         )
     else:
-        submissions = find_my_submissions(facade, venue=venue)
+        submissions = find_my_submissions(
+            facade,
+            include_old=include_old,
+            cycles_back=cycles_back if cycles_back is not None else 1,
+            venue=venue,
+        )
         results, errors = fetch_reviews(facade, submissions)
 
     if submission_ids:
