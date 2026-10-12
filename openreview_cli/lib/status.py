@@ -59,38 +59,48 @@ def _note_latest_ms(note: Any) -> int:
 # ARR cycles
 # ---------------------------------------------------------------------------
 
-def get_arr_cycles(facade: OpenReviewFacade) -> list[tuple[str, int]] | None:
-    """Fetch all ARR cycle groups.
+def get_arr_cycles(
+    facade: OpenReviewFacade,
+    years_back: int = 1,
+) -> list[tuple[str, int]] | None:
+    """Fetch recent ARR cycle groups.
+
+    The members of the top-level ARR group are stale (they stop at the
+    2022 API v1 cycles), so cycles are discovered by listing groups under
+    each year prefix (``aclweb.org/ACL/ARR/<year>/``) instead.
 
     Args:
         facade: Rate-limited OpenReview facade.
+        years_back: Number of years before the current one to include.
 
     Returns:
         A list of ``(cycle_id, cdate_ms)`` tuples sorted by cdate, oldest
         first — e.g. ``("aclweb.org/ACL/ARR/2026/August", 1782736166928)`` —
-        or ``None`` if the parent group cannot be read (offline, API
-        change). Individual unreadable cycle groups are skipped silently.
+        or ``None`` if no year could be read (offline, API change).
+        Individual unreadable years are skipped silently.
     """
-    try:
-        parent = facade.get_group(ARR_GROUP_ID)
-    except Exception:  # noqa: BLE001 - any API failure means "unknown"
-        return None
+    current_year = datetime.now(timezone.utc).year
 
     cycles: list[tuple[str, int]] = []
+    any_read = False
 
-    for member in getattr(parent, "members", None) or []:
-        if not ARR_CYCLE_RE.fullmatch(str(member)):
-            continue
-
+    for year in range(current_year - years_back, current_year + 1):
         try:
-            group = facade.get_group(member)
-        except Exception:  # noqa: BLE001
+            groups = facade.get_groups(prefix=f"{ARR_GROUP_ID}/{year}/")
+        except Exception:  # noqa: BLE001 - any API failure means "unknown"
             continue
 
-        cdate = getattr(group, "cdate", None)
+        any_read = True
 
-        if cdate:
-            cycles.append((str(member), int(cdate)))
+        for group in groups or []:
+            group_id = str(getattr(group, "id", "") or "")
+            cdate = getattr(group, "cdate", None)
+
+            if cdate and ARR_CYCLE_RE.fullmatch(group_id):
+                cycles.append((group_id, int(cdate)))
+
+    if not any_read:
+        return None
 
     cycles.sort(key=lambda item: item[1])
     return cycles
@@ -151,7 +161,9 @@ def _active_arr_cycles(
     open: every known cycle (or, if none are known, the empty set) is
     treated as active, so an API hiccup never hides all ARR papers.
     """
-    all_cycles = get_arr_cycles(facade)
+    # ARR runs ~5 cycles a year; always include the previous year so the
+    # window survives the new-year boundary.
+    all_cycles = get_arr_cycles(facade, years_back=1 + cycles_back // 4)
 
     active_cycles: set[str] = set()
 
@@ -265,7 +277,10 @@ def find_my_submissions(
         if not isinstance(authors, list):
             authors = []
 
-        matched = profile_id in author_ids
+        # Commitment submissions (e.g. EACL ARR_Commitment) hide
+        # ``authorids`` from their content; the server-side
+        # ``content.authorids`` query already matched them, so trust it.
+        matched = not author_ids or profile_id in author_ids
 
         # Some older/venue-specific records may only expose authors.
         if not matched and profile_fullname and profile_fullname in authors:
